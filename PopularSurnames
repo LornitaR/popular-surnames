@@ -1,0 +1,179 @@
+IDENTIFICATION DIVISION.
+PROGRAM-ID.     PopularSurnames.
+
+ENVIRONMENT DIVISION.
+INPUT-OUTPUT SECTION.
+SELECT CSV ASSIGN TO "Census.dat"
+    ORGANIZATION IS LINE SEQUENTIAL.
+SELECT WorkFile ASSIGN TO "WorkFile.tmp".
+SELECT SortedFile ASSIGN TO "Sorted.dat"
+    ORGANIZATION IS LINE SEQUENTIAL.
+SELECT ReportFile ASSIGN TO "10100814.htm".
+
+
+DATA DIVISION.
+FILE SECTION.
+FD CSV.
+01 CSVFile                      PIC X(37).
+    88 EndOfCSV                 VALUE HIGH-VALUES.
+
+
+SD WorkFile.
+01 WorkFileRec.
+    02 WkCenNum                 PIC 9(7).
+    02 WkSurname                PIC X(20).
+    02 WkCountyName             PIC X(9).
+
+FD SortedFile.
+01 Sorted.
+    88 EndOfFile                VALUE HIGH-VALUES.
+    02 CenNumSort               PIC 9(7).
+    02 SurnameSort              PIC X(20).
+    02 CountyNameSort           PIC X(9).
+  
+FD ReportFile.
+01 ReportRec                    PIC X(400).
+
+WORKING-STORAGE SECTION.
+01 htmlStart.
+    02 FILLER                   PIC X(62)
+    VALUE '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"'.
+    02 FILLER                   PIC X(62)
+    VALUE '"http//www.w3.org/TR/xhtml11/DTD/xhtml-transitional.dtd">'.
+    02 FILLER                   PIC X(43) VALUE '<html xmlns="http://www.w3.org/1999/xhtml">'.
+
+01 headStart.
+    02 FILLER                   PIC X(38) VALUE '<head><meta http-equiv="Content-Type" '.
+    02 FILLER                   PIC X(42) VALUE 'content="text/html; charset=iso-8859-1" />'.
+
+01 pageTitle                    PIC X(46) VALUE "<title>County Surname Frequency Report</title>".
+
+01 styleSheet                   PIC X(23) VALUE '<style type="text/css">'.
+
+01 styleBody.
+    02 FILLER                   PIC X(104) VALUE "h1 {font-family : Ariel, Helvetica, sans-serif; font-size : 18px; margin-left: 20px; font-weight: bold;}".
+    02 FILLER                   PIC X(33) VALUE "table {border-collapse:collapse;}".
+    02 FILLER                   PIC X(102) VALUE "th {font-family : Ariel, Helvetica, sans-serif; font-size : 14px; font-weight: bold; text-align:left;}".
+    02 FILLER                   PIC X(84) VALUE "td {font-family : Courier New; font-size : 12px;}".
+    02 FILLER                   PIC X(55) VALUE "table, th, td {border: 0px solid black; padding: 2px;}".
+    02 FILLER                   PIC X(28) VALUE "caption {font-weight: bold;}".
+    
+
+01 styleEnd                     PIC X(8) VALUE "</style>".
+
+01 bodyStart                    PIC X(13) VALUE "</head><body>".
+
+01 MainHeadings.
+    02 FILLER                   PIC X(46) VALUE "<h1>County Surname Frequency Report</h1>".
+    02 FILLER                   PIC X(3) VALUE SPACES.
+   
+01 SubHeadings.
+    02 FILLER                   PIC X(14) VALUE SPACES.
+    02 FILLER                   PIC X(60) VALUE "<table><tr><th>County Name</th>".
+    02 FILLER                   PIC X(5) VALUE SPACES.
+    02 FILLER                   PIC X(16) VALUE "<th>Surname</th>".
+    02 FILLER                   PIC X(14) VALUE SPACES.
+    02 FILLER                   PIC X(27) VALUE "<th>Count</th></tr>".
+    
+01  PopularNames.
+    02 PopularName OCCURS 11 TIMES
+                    INDEXED BY Nameidx.
+       03 NameFound             PIC X(20) VALUE SPACES.
+       03 NameFreq              PIC 9(3) VALUE ZEROS.
+ 
+    
+01 CountyLine.
+    02 FILLER                   PIC X(23) VALUE '<p><tr><td width="50%">'.
+    02 PrnCounty                PIC X(9).
+    
+01 SpaceLine                    PIC X(11) VALUE "</td><td>  ".
+
+01 SurnameLine.
+    02 FILLER                   PIC X(21) VALUE '</td><td>'.
+    02 PrnHighestSurname        PIC X(20).
+    02 FILLER                   PIC X(9) VALUE "</td><td>".
+    02 PrnHighestCount          PIC ZZ99.
+    02 FILLER                   PIC X(14) VALUE "</td></tr></p>".
+    
+01 tableEnd                     PIC X(9) VALUE "</table>".
+
+01 htmlEnd                      PIC X(15) VALUE "</body></html>".
+    
+
+01 PrevSurname                  PIC X(20).
+01 PrevCountyName               PIC X(9).
+01 CountSurname                 PIC 9(4).
+
+PROCEDURE DIVISION.
+Begin.
+    SORT WorkFile
+        ON ASCENDING KEY WkCountyName, WkSurname
+        INPUT PROCEDURE IS SortCensus
+        GIVING SortedFile
+        
+    OPEN INPUT SortedFile
+    OPEN OUTPUT ReportFile
+    PERFORM WriteReport
+    
+    READ SortedFile
+        AT END SET EndOfFile TO TRUE
+    END-READ
+    PERFORM UNTIL EndOfFile
+        INITIALIZE PopularNames
+        MOVE CountyNameSort TO PrevCountyName, PrnCounty 
+        WRITE ReportRec FROM CountyLine AFTER ADVANCING 1 LINE
+        PERFORM FindPopularSurname UNTIL CountyNameSort NOT EQUAL TO PrevCountyName OR EndOfFile
+        PERFORM VARYING Nameidx FROM 1 BY 1 UNTIL Nameidx > 10
+            MOVE NameFound(Nameidx) TO PrnHighestSurname
+            MOVE NameFreq(Nameidx) TO PrnHighestCount
+            WRITE ReportRec FROM SurnameLine AFTER ADVANCING 1 LINE
+            WRITE ReportRec FROM SpaceLine AFTER ADVANCING 1 LINE
+        END-PERFORM    
+   END-PERFORM
+   WRITE ReportRec FROM tableEnd AFTER ADVANCING 1 LINE
+   WRITE ReportRec FROM htmlEnd AFTER ADVANCING 1 LINE.
+   CLOSE SortedFile, ReportFile, CSV
+   STOP RUN.
+
+SortCensus.
+    OPEN INPUT CSV
+    READ CSV
+        AT END SET EndOfCsv TO TRUE
+    END-READ
+	PERFORM UNTIL EndOfCsv
+        UNSTRING CSVFile  DELIMITED BY "," 
+            INTO WkCenNum, WkSurname, WkCountyName
+            RELEASE WorkFileRec
+            READ CSV
+                AT END SET EndOfCsv TO TRUE
+            END-READ
+    END-PERFORM.
+
+WriteReport.
+    WRITE ReportRec FROM htmlStart 
+    WRITE ReportRec FROM headStart 
+    WRITE ReportRec FROM pageTitle 
+    WRITE ReportRec FROM styleSheet 
+    WRITE ReportRec FROM styleBody 
+    WRITE ReportRec FROM styleEnd 
+    WRITE ReportRec FROM bodyStart 
+    WRITE ReportRec FROM MainHeadings 
+    WRITE ReportRec FROM SubHeadings.
+   
+FindPopularSurname.
+    MOVE ZEROS TO CountSurname
+    MOVE SurnameSort TO PrevSurname
+    PERFORM UNTIL SurnameSort NOT EQUAL TO PrevSurname
+            OR CountyNameSort NOT EQUAL TO PrevCountyName
+            OR EndOfFile
+        ADD 1 TO CountSurname
+        READ SortedFile
+            AT END SET EndOfFile TO TRUE
+        END-READ
+    END-PERFORM
+    PERFORM VARYING Nameidx FROM 10 BY -1 UNTIL Nameidx < 1 OR CountSurname < NameFreq(Nameidx)
+        MOVE NameFound(Nameidx) TO NameFound(Nameidx + 1)
+        MOVE NameFreq(Nameidx) TO NameFreq(Nameidx + 1)
+        MOVE PrevSurname TO NameFound(Nameidx)
+        MOVE CountSurname TO NameFreq(Nameidx)
+    END-PERFORM.
